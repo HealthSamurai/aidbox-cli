@@ -2,12 +2,22 @@
 // use std::fs::File;
 extern crate serde_json;
 extern crate colored;
+extern crate hyper;
+extern crate clap;
+extern crate base64;
 
 use std::io;
-use std::io::prelude::*;
 use serde_json::{Value};
 use colored::*;
 use std::collections::HashMap;
+
+use std::io::prelude::*;
+// use std::io::{Write};
+use hyper::Client;
+use hyper::rt::{self, Future, Stream};
+use clap::{Arg, App, SubCommand};
+
+// use hyper::header::{Headers, Authorization, Basic};
 
 
 fn format_ts(ts: i64) -> String {
@@ -104,35 +114,101 @@ fn format_line(v:Value) -> String {
     }
 }
 
-fn main() {
+fn process_line(grp: &mut HashMap<String, String>, s:String ) -> () {
+    let v: Value = serde_json::from_str(&s).unwrap();
+    if v["ctx!"].is_string() {
+        let ctx = String::from(v["ctx!"].as_str().unwrap());
+        match grp.get(&ctx) {
+            Some(p) => print!("{}", p),
+            None => ()
+        };
+        print!("{}", format_line(v));
+
+    } else if v["ctx"].is_string() {
+        let ctx = String::from(v["ctx"].as_str().unwrap()) ;
+        let res:String = match grp.get(&ctx) {
+            Some(p) => format!("{}{}", p, &format_line(v)),
+            None => format_line(v)
+        };
+        grp.insert(ctx, res);
+
+    } else {
+        print!("{}", format_line(v));
+    }
+}
+
+fn stdin_logs() {
     let stdin = io::stdin();
 
     let mut grp:HashMap<String, String>= HashMap::new();
 
     for line in stdin.lock().lines() {
-
         let s = line.unwrap();
-        let v: Value = serde_json::from_str(&s).unwrap();
-        if v["ctx!"].is_string() {
-            let ctx = String::from(v["ctx!"].as_str().unwrap());
-            match grp.get(&ctx) {
-                Some(p) => print!("{}", p),
-                None => ()
-            };
-            print!("{}", format_line(v));
-
-        } else if v["ctx"].is_string() {
-            let ctx = String::from(v["ctx"].as_str().unwrap()) ;
-            let res:String = match grp.get(&ctx) {
-                Some(p) => format!("{}{}", p, &format_line(v)),
-                None => format_line(v)
-            };
-            grp.insert(ctx, res);
-
-        } else {
-            print!("{}", format_line(v));
-        }
-
-
+        process_line(&mut grp, s);
     }
+}
+
+fn rest_logs(base_url:String, cl:String, sec:String) -> (){
+    rt::run(rt::lazy(move || {
+        let auth = base64::encode(&format!("{}:{}", cl, sec)); 
+        let url = format!("{}/_logs", base_url);
+        println!("Connecting to {}!", url);
+
+        let client = Client::new();
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri(url)
+            .header("Authorization", format!("Basic {}", auth)).body(hyper::Body::default())
+            .unwrap();
+
+
+        client.request(req)
+            .and_then(|res| {
+                println!("Connected {}", res.status());
+                let mut grp:HashMap<String, String>= HashMap::new();
+                res.into_body()
+                    .for_each(move |chunk| {
+                        let mut v = Vec::new();
+                        v.extend_from_slice(&*chunk);
+                        process_line(&mut grp, String::from_utf8(v).unwrap());
+                        return Ok(());
+                    })
+            }).map_err(|err| {
+                println!("Error: {}", err);
+            })
+
+    }));
+}
+
+fn main() {
+    let matches = App::new("aidbox cli")
+        .version("0.0.1")
+        .author("Health Samurai")
+        .about("CLI tools for aidbox")
+        .arg(Arg::with_name("url").short("u").value_name("BASE_URL").env("AIDBOX_BASE_URL").takes_value(true))
+        .arg(Arg::with_name("client").short("c").value_name("CLIENT_ID").env("AIDBOX_CLIENT_SECRET").takes_value(true))
+        .arg(Arg::with_name("secret").short("s").value_name("CLIENT_SECRET").env("AIDBOX_CLIENT_SECRET").takes_value(true))
+        .subcommand(
+            SubCommand::with_name("logs")
+                .about("read aidbox logs")
+                .usage("
+read logs from API:
+    aidbox -u http://mybox.url -c client-id -p client-secret logs
+
+read logs stdin:
+    tail -f logs | aidbox logs -i
+  ").arg(Arg::with_name("stdin").short("i"))
+        ).get_matches();
+
+    if let Some(logs_m) = matches.subcommand_matches("logs") {
+        if let (Some(url), Some(cl), Some(sec)) = (matches.value_of("url"), matches.value_of("client"), matches.value_of("secret")) {
+            rest_logs(String::from(url), String::from(cl), String::from(sec));
+        } else if logs_m.is_present("stdin") {
+          stdin_logs();
+        } else {
+            println!("Please provide BASE_URL; CLIENT_ID & CLIENT_SECRET");
+        }
+    }
+
+
 }
