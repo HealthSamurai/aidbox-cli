@@ -17,6 +17,7 @@ use hyper::Client;
 use hyper::rt::{self, Future, Stream};
 use clap::{Arg, App, SubCommand};
 
+mod logwatcher;
 // use hyper::header::{Headers, Authorization, Basic};
 
 
@@ -53,6 +54,10 @@ fn format_line(v:Value) -> String {
             Some(s) => s,
             None => "Unknown"
         };
+
+        if let Some(tn) = v["tn"].as_str(){
+            res.push_str(&format!("{} ", tn.bright_green()));
+        }
 
         match v["ts"].as_i64() {
             Some(ts) =>  res.push_str(&format!("{}",format_ts(ts).bright_black())),
@@ -91,6 +96,13 @@ fn format_line(v:Value) -> String {
                 None => ()
             }
             res.push_str(&format!("{}", format_d(v.clone())));
+        } else if ev == "w/ex" {
+            res.push_str(&format!("{}", " Exception:\n".red().bold()));
+            if let Some(etr) = v["etr"].as_str() {
+                res.push_str(&format!("{}",etr.bright_red()));
+            } else {
+                res.push_str(&format!("{}", v));
+            }
         } else {
             let lvl = match v["lvl"].as_str() {
                 Some(s) => s,
@@ -180,6 +192,17 @@ fn rest_logs(base_url:String, cl:String, sec:String) -> (){
     }));
 }
 
+fn file_logs(f:String){
+
+    let mut log_watcher = logwatcher::LogWatcher::register(f).unwrap();
+
+    let mut grp:HashMap<String, String>= HashMap::new();
+
+    log_watcher.watch(&mut |line: String| {
+        process_line(&mut grp, line);
+    });
+}
+
 fn main() {
     let matches = App::new("aidbox cli")
         .version("0.0.1")
@@ -197,14 +220,23 @@ read logs from API:
 
 read logs stdin:
     tail -f logs | aidbox logs -i
-  ").arg(Arg::with_name("stdin").short("i"))
-        ).get_matches();
+
+read from file:
+    aidbox logs -f logs
+  ")
+.arg(Arg::with_name("stdin").short("i"))
+.arg(Arg::with_name("file").short("f").env("LOGS_FILE").takes_value(true))
+)
+.get_matches();
 
     if let Some(logs_m) = matches.subcommand_matches("logs") {
         if let (Some(url), Some(cl), Some(sec)) = (matches.value_of("url"), matches.value_of("client"), matches.value_of("secret")) {
             rest_logs(String::from(url), String::from(cl), String::from(sec));
         } else if logs_m.is_present("stdin") {
           stdin_logs();
+        } else if let Some(_file) = logs_m.value_of("file") {
+            println!("Read from file {}", _file);
+            file_logs(String::from(_file));
         } else {
             println!("Please provide BASE_URL; CLIENT_ID & CLIENT_SECRET");
         }
