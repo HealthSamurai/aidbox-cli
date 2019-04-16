@@ -5,6 +5,8 @@ extern crate colored;
 extern crate hyper;
 extern crate clap;
 extern crate base64;
+extern crate postgres;
+extern crate postgres_binary_copy;
 
 use std::io;
 use serde_json::{Value};
@@ -18,17 +20,19 @@ use hyper::rt::{self, Future, Stream};
 use clap::{Arg, App, SubCommand};
 
 mod logwatcher;
+mod pgloader;
 // use hyper::header::{Headers, Authorization, Basic};
 
 
-fn format_ts(ts: i64) -> String {
+fn format_ts(ts: String) -> String {
 
     // let millis = ts % 1000;
-    let second = (ts / 1000) % 60;
-    let minute = (ts / (1000 * 60)) % 60;
-    let hour = (ts / (1000 * 60 * 60)) % 24;
+    // let second = (ts / 1000) % 60;
+    // let minute = (ts / (1000 * 60)) % 60;
+    // let hour = (ts / (1000 * 60 * 60)) % 24;
 
-    return format!("{:0>2}:{:0>2}:{:0>2}", hour, minute, second);
+    // return format!("{:0>2}:{:0>2}:{:0>2}", hour, minute, second);
+    return ts;
 }
 
 fn format_d(v:Value) -> ColoredString {
@@ -49,7 +53,7 @@ fn format_d(v:Value) -> ColoredString {
 fn format_line(v:Value) -> String {
     let mut res = String::new();
 
-    if v["ev"].is_string() && v["ts"].is_number() {
+    if v["ev"].is_string() && v["ts"].is_string() {
         let ev = match v["ev"].as_str() {
             Some(s) => s,
             None => "Unknown"
@@ -59,34 +63,34 @@ fn format_line(v:Value) -> String {
             res.push_str(&format!("{} ", tn.bright_green()));
         }
 
-        match v["ts"].as_i64() {
-            Some(ts) =>  res.push_str(&format!("{}",format_ts(ts).bright_black())),
+        match v["ts"].as_str() {
+            Some(ts) =>  res.push_str(&format!("{}",format_ts(String::from(ts)).bright_black())),
             None => ()
         }
         if ev == "w/req" {
-            let m = match v["w/m"].as_str() {
+            let m = match v["w_m"].as_str() {
                 Some(s) => s.to_uppercase().bold().yellow(),
                 None => "GET".bold().yellow()
             };
 
-            let url = match v["w/url"].as_str() {
+            let url = match v["w_url"].as_str() {
                 Some(s) => s.white().bold(),
                 None => "???".white().bold()
             };
 
             res.push_str(&format!(" {} {}",m, url));
 
-            match v["w/?"].as_str() {
+            match v["w_qs"].as_str() {
                 Some(qs) => res.push_str(&format!("?{}", qs)),
                 None => ()
             }
-            match v["w/addr"].as_str() {
+            match v["w_addr"].as_str() {
                 Some(s) => res.push_str(&format!(" by {}", s.bright_black())),
                 None => ()
             }
         } else if ev == "db/q" || ev == "db/ex" {
             res.push_str(&format!("  {}{}:", "sql".bright_cyan(), &format_d(v.clone()))) ;
-            match v["db/sql"].as_str() {
+            match v["sql"].as_str() {
                 Some(s) => res.push_str(&format!(" {}", s.cyan())),
                 None => ()
             }
@@ -128,8 +132,9 @@ fn format_line(v:Value) -> String {
 
 fn process_line(grp: &mut HashMap<String, String>, s:String ) -> () {
     let v: Value = serde_json::from_str(&s).unwrap();
-    if v["ctx!"].is_string() {
-        let ctx = String::from(v["ctx!"].as_str().unwrap());
+
+    if v["ctx_end"].is_boolean() && v["ctx"].is_string() {
+        let ctx = String::from(v["ctx"].as_str().unwrap()) ;
         match grp.get(&ctx) {
             Some(p) => print!("{}", p),
             None => ()
@@ -204,6 +209,16 @@ fn file_logs(f:String){
 }
 
 fn main() {
+    let logs_usage = "
+read logs from API:
+    aidbox -u http://mybox.url -c client-id -p client-secret logs
+
+read logs stdin:
+    tail -f logs | aidbox logs -i
+
+read from file:
+    aidbox logs -f logs
+";
     let matches = App::new("aidbox cli")
         .version("0.0.1")
         .author("Health Samurai")
@@ -214,20 +229,26 @@ fn main() {
         .subcommand(
             SubCommand::with_name("logs")
                 .about("read aidbox logs")
-                .usage("
-read logs from API:
-    aidbox -u http://mybox.url -c client-id -p client-secret logs
-
-read logs stdin:
-    tail -f logs | aidbox logs -i
-
-read from file:
-    aidbox logs -f logs
-  ")
-.arg(Arg::with_name("stdin").short("i"))
-.arg(Arg::with_name("file").short("f").env("LOGS_FILE").takes_value(true))
-)
-.get_matches();
+                .usage(logs_usage)
+                .arg(Arg::with_name("stdin").short("i"))
+                .arg(Arg::with_name("file").short("f").env("LOGS_FILE").takes_value(true)))
+        .subcommand(
+            SubCommand::with_name("pg")
+                .about("Work with postgres")
+                .arg(Arg::with_name("user").short("u").value_name("PGUSER").env("PGUSER").takes_value(true).required(true))
+                .arg(Arg::with_name("password").short("w").value_name("PGPASSWORD").env("PGPASSWORD").takes_value(true).required(true))
+                .arg(Arg::with_name("host").short("h").value_name("PGHOST").env("PGHOST").takes_value(true).required(true))
+                .arg(Arg::with_name("port").short("p").value_name("PGPORT").env("PGPORT").takes_value(true).required(true))
+                .arg(Arg::with_name("database").short("d").value_name("PGDATABASE").env("PGDATABASE").takes_value(true).required(true))
+                .subcommand(
+                    SubCommand::with_name("conn").about("test connection")
+                )
+                .subcommand(
+                    SubCommand::with_name("logs").about("Load logs into postgres")
+                        .arg(Arg::with_name("file").short("f").value_name("FILE").takes_value(true).required(true))
+                        .arg(Arg::with_name("table").short("t").value_name("TABLE").takes_value(true).required(true))
+                ))
+        .get_matches();
 
     if let Some(logs_m) = matches.subcommand_matches("logs") {
         if let (Some(url), Some(cl), Some(sec)) = (matches.value_of("url"), matches.value_of("client"), matches.value_of("secret")) {
@@ -240,7 +261,34 @@ read from file:
         } else {
             println!("Please provide BASE_URL; CLIENT_ID & CLIENT_SECRET");
         }
-    }
+    } else if let Some(pg_m) = matches.subcommand_matches("pg") {
 
+        if let (Some(user), Some(password), Some(host), Some(port), Some(database))
+            = (pg_m.value_of("user"), pg_m.value_of("password"), pg_m.value_of("host"), pg_m.value_of("port"), pg_m.value_of("database"))
+        {
+
+            let conn_cfg = pgloader::PgConn {
+                user: String::from(user),
+                password: String::from(password),
+                host: String::from(host),
+                port: String::from(port),
+                database: String::from(database)
+            };
+
+            if let Some(l_m) = pg_m.subcommand_matches("logs") {
+                if let (Some(file), Some(table)) = (l_m.value_of("file"), l_m.value_of("table")) {
+                    pgloader::load(String::from(file),String::from(table), conn_cfg);
+                } else {
+                    println!("provide --file and --table");
+                }
+            } else if let Some(_l) = pg_m.subcommand_matches("conn") {
+                println!("test conn");
+            } else {
+                println!("Unknown subcommand!");
+            }
+        } else {
+            println!("Provide connection info");
+        }
+    }
 
 }
