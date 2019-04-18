@@ -43,6 +43,7 @@ matrix:
     # - env: TARGET=armv7-unknown-linux-gnueabihf
     # - env: TARGET=i686-unknown-linux-gnu
     - env: TARGET=i686-unknown-linux-musl
+      rust: nightly
     # - env: TARGET=mips-unknown-linux-gnu
     # - env: TARGET=mips64-unknown-linux-gnuabi64
     # - env: TARGET=mips64el-unknown-linux-gnuabi64
@@ -53,11 +54,14 @@ matrix:
     # - env: TARGET=s390x-unknown-linux-gnu DISABLE_TESTS=1
     # - env: TARGET=x86_64-unknown-linux-gnu
     - env: TARGET=x86_64-unknown-linux-musl
+      rust: nightly
 
     # OSX
     - env: TARGET=i686-apple-darwin
+      rust: nightly
       os: osx
     - env: TARGET=x86_64-apple-darwin
+      rust: nightly
       os: osx
 
     # *BSD
@@ -67,6 +71,7 @@ matrix:
 
     # Windows
     - env: TARGET=x86_64-pc-windows-gnu
+      rust: nightly
 
     # Bare metal
     # These targets don't support std and as such are likely not suitable for
@@ -114,7 +119,7 @@ deploy:
     # and nightly channels. This condition makes sure there is only one release
     # for such targets and that's generated using the stable channel
     condition: $TRAVIS_RUST_VERSION = nightly
-    tags: true
+    # tags: true
   provider: releases
   skip_cleanup: true
 
