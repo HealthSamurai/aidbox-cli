@@ -3,3 +3,5 @@ tmp
 bin
 .DS_Store
 Cargo.lock
+pgdata
+esdata

@@ -3,6 +3,8 @@
 extern crate serde_json;
 extern crate colored;
 extern crate hyper;
+extern crate curl;
+
 extern crate clap;
 extern crate base64;
 extern crate postgres;
@@ -21,6 +23,7 @@ use clap::{Arg, App, SubCommand};
 
 mod logwatcher;
 mod pgloader;
+mod esloader;
 // use hyper::header::{Headers, Authorization, Basic};
 
 
@@ -233,6 +236,16 @@ read from file:
                 .arg(Arg::with_name("stdin").short("i"))
                 .arg(Arg::with_name("file").short("f").env("LOGS_FILE").takes_value(true)))
         .subcommand(
+            SubCommand::with_name("es")
+                .about("Elasticsearch integration")
+                .subcommand(
+                    SubCommand::with_name("logs")
+                        .about("load logs into es")
+                        .arg(Arg::with_name("url").short("l").value_name("ES_URL").takes_value(true).required(true))
+                        .arg(Arg::with_name("file").short("f").value_name("FILE").takes_value(true).required(true))
+                )
+        )
+        .subcommand(
             SubCommand::with_name("pg")
                 .about("Work with postgres")
                 .arg(Arg::with_name("user").short("u").value_name("PGUSER").env("PGUSER").takes_value(true).required(true))
@@ -261,6 +274,17 @@ read from file:
         } else {
             println!("Please provide BASE_URL; CLIENT_ID & CLIENT_SECRET");
         }
+    } else if let Some(es_m) = matches.subcommand_matches("es") {
+        if let Some(es_logs_m) = es_m.subcommand_matches("logs") {
+            if let (Some(url), Some(_file)) = (es_logs_m.value_of("url"), es_logs_m.value_of("file"))
+            {
+                println!("Export to elasticsearch");
+                esloader::load(_file.to_string(), url.to_string());
+            } else {
+                println!("Ups something missed");
+            }
+        }
+
     } else if let Some(pg_m) = matches.subcommand_matches("pg") {
 
         if let (Some(user), Some(password), Some(host), Some(port), Some(database))

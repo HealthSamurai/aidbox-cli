@@ -1,0 +1,36 @@
+version: '3.1'
+services:
+  adb:
+    image: aidbox/db:11.2.0
+    container_name: analytics
+    ports:
+      - "${PGPORT}:5432"
+    volumes:
+      - "./pgdata:/data"
+    environment:
+      POSTGRES_USER:     "${PGUSER}" 
+      POSTGRES_PASSWORD: "${PGPASSWORD}" 
+      POSTGRES_DB:       "${PGDATABASE}"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.0.0
+    volumes:
+      - ./esdata:/usr/share/elasticsearch/data
+    environment:
+      - cluster.name=aidbox-cluster
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+  kibana:
+    links:
+      - "elasticsearch:elasticsearch"
+    image: docker.elastic.co/kibana/kibana:7.0.0
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
