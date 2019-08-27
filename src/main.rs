@@ -5,6 +5,8 @@ extern crate colored;
 extern crate hyper;
 extern crate curl;
 
+extern crate chrono;
+
 extern crate clap;
 extern crate base64;
 extern crate postgres;
